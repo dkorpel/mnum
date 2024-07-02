@@ -3,14 +3,14 @@
 const MAX_DEPTH = 16; // maximum expression complexity
 
 var graph = {
-	w: 256.0,
-	h: 256.0,
+	w: 512.0,
+	h: 512.0,
 	xmin: -10.0,
 	xmax: 10.0,
 	ymin: 10.0,
 	ymax: -10.0,
 
-	stack: Array.from(Array(MAX_DEPTH), () => new Array(256)),
+	stack: Array.from(Array(MAX_DEPTH), () => new Array(512)),
 	si: 0, // stack index
 }
 
@@ -95,7 +95,6 @@ funcs = [
 	(x) => (x), //FTag_re
 	(x) => 0, //FTag_im
 	(x, y) => NaN, //FTag_derivative
-	(x, y) => NaN, //FTag_integral
 	Math.sqrt, //FTag_sqrt
 	(x) => (Math.pow(x, 1.0 / 3.0)), //FTag_cbrt
 	(x) => x == 0 ? 0 : (x < 0 ? -1 : 1), //FTag_sgn
@@ -132,36 +131,33 @@ funcs = [
 var canvas;
 
 function getCanvas() {
-	if (canvas) {
+	var c = document.getElementById("graph-canvas");
+	if (c != canvas) {
+		canvas = c;
+		canvas.addEventListener('wheel', (evt) => {
+			graph.xmin -= evt.deltaY * 0.1;
+			graph.xmax += evt.deltaY * 0.1;
+			drawGraph();
+			// mark that the event has been handled to stop the page from scrolling
+			evt.preventDefault();
+		}, false);
 		return canvas;
 	}
-	canvas = document.getElementById("graph-canvas");
-	canvas.addEventListener('wheel', (evt) => {
-		graph.yscale += evt.deltaY * 0.01;
-	}, false);
-
-	if (!canvas) {
-		return;
-	}
-	ctx = canvas.getContext("2d");
 }
 
-// Multiply / divide by 10 until grid has reasonable spacing
-function scaleGridSpacing(x) {
+// Multiply / divide by 10 until grid has reasonable spacing (minSpace pixels between grid lines)
+function scaleGridSpacing(x, minSpace) {
 	const lg = Math.log10(x);
-	return Math.pow(10, lg - Math.round(lg-1));
+	return Math.pow(10, lg - Math.round(lg - Math.log10(minSpace)));
 }
 
 function drawGraphBackground(ctx, graph) {
-	ctx.strokeStyle = "#00000040";
+	ctx.strokeStyle = "#00000020";
 	ctx.lineWidth = 1;
 	ctx.beginPath();
 
-	// Draw the grid
-	const w = scaleGridSpacing(graph.w / Math.abs(graph.xmax - graph.xmin));
-	// const lg = Math.log10(w);
-	// w = Math.pow(10, lg - Math.round(lg))
-	const h = scaleGridSpacing(graph.h / Math.abs(graph.ymax - graph.ymin));
+	const w = scaleGridSpacing(graph.w / Math.abs(graph.xmax - graph.xmin), 50);
+	const h = scaleGridSpacing(graph.h / Math.abs(graph.ymax - graph.ymin), 50);
 
 	// console.log(w + " " + h, " (" + modP(graph.xmin, w) + " " + modP(graph.ymin, h))
 	const ox = invLerp(graph.xmin, graph.xmax, 0) * graph.w;
@@ -177,19 +173,30 @@ function drawGraphBackground(ctx, graph) {
 	}
 	ctx.stroke();
 
-	// draw numbers on the axes
-	ctx.fillStyle = "#000000FF";
-	ctx.font = "12px Arial";
-	ctx.textAlign = "center";
-	ctx.textBaseline = "middle";
+	// Draw numbers on the axes
+	ctx.fillStyle = "#909090FF";
+	ctx.font = "14px Arial";
 
-	for (let x = modP(ox, w); x < canvas.width; x += w) {
-		const value = lerp(graph.xmin, graph.xmax, x / graph.w);
-		ctx.fillText(value.toFixed(2), x, oy);
+	// Draw the numbers on the x axis
+	ctx.textAlign = "middle";
+	ctx.textBaseline = "top";
+	for (let x = modP(ox, w); x < canvas.width; x += w * 2) {
+		const value = lerp(graph.xmin, graph.xmax, x / graph.w).toFixed(1);
+		if (value == 0) {
+			continue;
+		}
+		ctx.fillText(value, x, oy);
 	}
-	for (let y = modP(oy, h); y < canvas.height; y += h) {
-		const value = lerp(graph.ymin, graph.ymax, y / graph.h);
-		ctx.fillText(value.toFixed(2), ox, y);
+
+	// Draw the numbers on the y axis
+	ctx.textAlign = "right";
+	ctx.textBaseline = "middle";
+	for (let y = modP(oy, h); y < canvas.height; y += h * 2) {
+		const value = lerp(graph.ymin, graph.ymax, y / graph.h).toFixed(1);
+		if (value == 0) {
+			continue;
+		}
+		ctx.fillText(value, ox, y);
 	}
 
 	// Draw the axes
@@ -205,15 +212,22 @@ function drawGraphBackground(ctx, graph) {
 }
 
 function drawGraph() {
-	canvas = document.getElementById("graph-canvas");
-	if (!canvas) {
-		return;
-	}
+	getCanvas();
 	ctx = canvas.getContext("2d");
 
 	// draw a simple grid on a white background
 	ctx.fillStyle = "#FFFFFF";
 	ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+	const values = graph.stack[0].slice().sort((a, b) => (a - b));
+	// graph.ymin = values[values.length - 1];
+	// graph.ymax = values[0];
+	// console.log(values);
+	const bl = values[values.length * 7 / 8];
+	const bh = values[values.length * 1 / 8];
+	const br = Math.abs(bl - bh);
+	graph.ymin = bl + br * 0.375;
+	graph.ymax = bh - br * 0.375;
 
 	drawGraphBackground(ctx, graph);
 
@@ -221,33 +235,6 @@ function drawGraph() {
 	ctx.strokeStyle = "#FF0000";
 	ctx.lineWidth = 2;
 	ctx.beginPath();
-
-	// set undefined values to 0
-	for (let x = 0; x < canvas.width; x += 1) {
-		if (graph.stack[0][x] === undefined) {
-			console.log("undefined at " + x)
-			graph.stack[0][x] = 0;
-		}
-	}
-
-	// get a sorted copy of the stack
-	const values = graph.stack[0].slice().sort((a, b) => (a - b));
-
-	for (let x = 0; x < canvas.width; x += 1) {
-		if (values[x] === undefined) {
-			console.log("undefined at " + x)
-			values[x] = 0;
-		}
-	}
-
-	// graph.ymin = values[values.length - 1];
-	// graph.ymax = values[0];
-	// console.log(values);
-	const bl = values[values.length * 7 / 8];
-	const bh = values[values.length * 1 / 8];
-	const br = Math.abs(bl - bh);
-	graph.ymin = bl + br * 0.25;
-	graph.ymax = bh - br * 0.25;
 
 	ctx.moveTo(0, graph.oy);
 	for (let x = 0; x < canvas.width; x += 1) {
